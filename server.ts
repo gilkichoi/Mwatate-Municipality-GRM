@@ -6,7 +6,10 @@ import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
 import session from "express-session";
 import bcrypt from "bcryptjs";
+import SQLiteStoreFactory from "connect-sqlite3";
+import cors from "cors";
 
+const SQLiteStore = SQLiteStoreFactory(session);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -159,23 +162,60 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.set("trust proxy", 1);
+  app.set("trust proxy", true);
+  
+  // Force HTTPS for secure cookies behind proxy
+  app.use((req, res, next) => {
+    req.headers['x-forwarded-proto'] = 'https';
+    next();
+  });
+
+  app.use(cors({
+    origin: (origin, callback) => callback(null, true),
+    credentials: true
+  }));
   app.use(express.json());
+  const store = new SQLiteStore({ 
+    db: "sessions.db", 
+    dir: __dirname, 
+    table: "sessions" 
+  }) as any;
+  
+  // Handle store errors
+  (store as any).on('error', (err: any) => {
+    console.error("[Session Store Error]", err);
+  });
+
   app.use(session({
+    store,
     secret: process.env.SESSION_SECRET || "mwatate-municipality-secret",
-    resave: false,
-    saveUninitialized: false,
-    proxy: true, // Required for secure cookies behind proxy
+    resave: true,
+    saveUninitialized: true,
+    rolling: true,
+    proxy: true,
+    name: 'connect.sid',
     cookie: {
-      secure: true, // Required for SameSite=None
-      sameSite: "none", // Required for cross-origin iframe
-      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+      secure: true,
+      sameSite: "none",
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      httpOnly: true,
+      path: '/'
     }
   }));
 
+  // Session Debug Middleware
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/admin') || req.path === '/api/auth/me') {
+      console.log(`[Session Debug] Path: ${req.path}, Method: ${req.method}, Proto: ${req.protocol}, Origin: ${req.get('origin')}, SessionID: ${req.sessionID}, HasUserId: ${!!(req.session as any)?.userId}, Cookies: ${req.headers.cookie ? 'Present' : 'Missing'}`);
+    }
+    next();
+  });
+
   // Auth Middleware
   const requireAuth = (req: any, res: any, next: any) => {
-    if (req.session && (req.session as any).userId) {
+    const hasSession = !!(req.session && (req.session as any).userId);
+    console.log(`[Auth Check] Path: ${req.path}, SessionID: ${req.sessionID}, HasUserId: ${hasSession}, UserId: ${(req.session as any)?.userId}`);
+    if (hasSession) {
       next();
     } else {
       res.status(401).json({ error: "Unauthorized" });
@@ -183,14 +223,17 @@ async function startServer() {
   };
 
   const requireRole = (roles: string[]) => (req: any, res: any, next: any) => {
-    if (!req.session || !(req.session as any).userId) {
+    const userId = (req.session as any)?.userId;
+    const userRole = (req.session as any)?.role;
+    console.log(`[Role Check] Path: ${req.path}, SessionID: ${req.sessionID}, UserId: ${userId}, Role: ${userRole}`);
+    
+    if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    const userRole = (req.session as any).role;
     if (!userRole) {
       return res.status(401).json({ error: "Session invalid: Role missing. Please login again." });
     }
-    if (roles.includes(userRole) || userRole === 'admin') {
+    if (roles.includes(userRole) || userRole === 'admin' || userRole === 'Super Admin') {
       next();
     } else {
       res.status(403).json({ error: "Forbidden: Insufficient permissions" });
@@ -209,7 +252,14 @@ async function startServer() {
       (req.session as any).userId = user.id;
       (req.session as any).username = user.username;
       (req.session as any).role = user.role;
-      res.json({ success: true, user: { id: user.id, username: user.username, role: user.role } });
+      
+      req.session.save((err) => {
+        if (err) {
+          console.error("Session save error:", err);
+          return res.status(500).json({ error: "Failed to save session" });
+        }
+        res.json({ success: true, user: { id: user.id, username: user.username, role: user.role } });
+      });
     } else {
       res.status(401).json({ error: "Invalid credentials" });
     }

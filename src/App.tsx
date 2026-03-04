@@ -66,7 +66,10 @@ export default function App() {
       const res = await fetch('/api/auth/me', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
+        console.log('Authenticated as:', data.user.username, 'Role:', data.user.role);
         setUser(data.user);
+      } else {
+        console.log('Not authenticated (Status:', res.status, ')');
       }
     } catch (err) {
       console.error('Auth check failed', err);
@@ -656,6 +659,7 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const triggerSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -680,7 +684,10 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
   });
 
   useEffect(() => {
-    fetchGrievances();
+    const timer = setTimeout(() => {
+      fetchGrievances();
+    }, 300);
+    return () => clearTimeout(timer);
   }, []);
 
   const fetchGrievances = async () => {
@@ -710,6 +717,7 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
       await fetch(`/api/admin/grievances/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ status })
       });
       fetchGrievances();
@@ -727,6 +735,7 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
       await fetch(`/api/admin/grievances/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ assigned_to })
       });
       fetchGrievances();
@@ -1465,7 +1474,10 @@ function UserManagementView({ user }: { user: User }) {
   const isSuperAdmin = user.role === 'Super Admin' || user.role === 'admin';
 
   useEffect(() => {
-    fetchUsers();
+    const timer = setTimeout(() => {
+      fetchUsers();
+    }, 300);
+    return () => clearTimeout(timer);
   }, []);
 
   const fetchUsers = async () => {
