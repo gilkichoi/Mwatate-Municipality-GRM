@@ -1,0 +1,5 @@
+{
+  "name": "Mwatate Municipality GRM",
+  "description": "A Grievance Redress Mechanism system for Mwatate Municipality, Taita Taveta County, allowing citizens to report issues and track resolutions.",
+  "requestFramePermissions": ["geolocation"]
+}
