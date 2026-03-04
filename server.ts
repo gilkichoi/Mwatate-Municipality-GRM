@@ -34,9 +34,34 @@ db.exec(`
     username TEXT UNIQUE,
     password TEXT,
     role TEXT DEFAULT 'staff',
+    is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS categories (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+// Seed initial categories if none exist
+const categoryCount = db.prepare("SELECT COUNT(*) as count FROM categories").get() as any;
+if (categoryCount.count === 0) {
+  const initialCategories = [
+    "Infrastructure",
+    "Water Supply",
+    "Waste Management",
+    "Public Health",
+    "Environment",
+    "Land Issues",
+    "Other"
+  ];
+  const insertCategory = db.prepare("INSERT INTO categories (id, name) VALUES (?, ?)");
+  initialCategories.forEach(name => {
+    insertCategory.run(Math.random().toString(36).substring(2, 11), name);
+  });
+}
 
 // Seed initial admin user if not exists
 const adminExists = db.prepare("SELECT * FROM users WHERE username = 'admin'").get();
@@ -46,14 +71,18 @@ if (!adminExists) {
     Math.random().toString(36).substring(2, 11),
     "admin",
     hashedPassword,
-    "admin"
+    "Super Admin"
   );
 }
+
+// Migration: Normalize admin role
+db.prepare("UPDATE users SET role = 'Super Admin' WHERE username = 'admin' AND role = 'admin'").run();
 
 // Migration: Add columns if they don't exist (for existing databases)
 try { db.exec("ALTER TABLE grievances ADD COLUMN title TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN priority TEXT DEFAULT 'Medium';"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN assigned_to TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1;"); } catch (e) {}
 
 // Email Transporter Helper (Lazy initialization)
 let transporter: nodemailer.Transporter | null = null;
@@ -130,24 +159,41 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.set("trust proxy", 1);
   app.use(express.json());
   app.use(session({
     secret: process.env.SESSION_SECRET || "mwatate-municipality-secret",
     resave: false,
     saveUninitialized: false,
+    proxy: true, // Required for secure cookies behind proxy
     cookie: {
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: true, // Required for SameSite=None
+      sameSite: "none", // Required for cross-origin iframe
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
   }));
 
   // Auth Middleware
   const requireAuth = (req: any, res: any, next: any) => {
-    if ((req.session as any).userId) {
+    if (req.session && (req.session as any).userId) {
       next();
     } else {
       res.status(401).json({ error: "Unauthorized" });
+    }
+  };
+
+  const requireRole = (roles: string[]) => (req: any, res: any, next: any) => {
+    if (!req.session || !(req.session as any).userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const userRole = (req.session as any).role;
+    if (!userRole) {
+      return res.status(401).json({ error: "Session invalid: Role missing. Please login again." });
+    }
+    if (roles.includes(userRole) || userRole === 'admin') {
+      next();
+    } else {
+      res.status(403).json({ error: "Forbidden: Insufficient permissions" });
     }
   };
 
@@ -157,6 +203,9 @@ async function startServer() {
     const user: any = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
     
     if (user && bcrypt.compareSync(password, user.password)) {
+      if (user.is_active === 0) {
+        return res.status(403).json({ error: "Account deactivated. Please contact administrator." });
+      }
       (req.session as any).userId = user.id;
       (req.session as any).username = user.username;
       (req.session as any).role = user.role;
@@ -216,12 +265,12 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/grievances", requireAuth, (req, res) => {
+  app.get("/api/admin/grievances", requireRole(['Super Admin', 'GRM Officer', 'Viewer', 'admin']), (req, res) => {
     const grievances = db.prepare("SELECT * FROM grievances ORDER BY created_at DESC").all();
     res.json(grievances);
   });
 
-  app.patch("/api/admin/grievances/:id", requireAuth, async (req, res) => {
+  app.patch("/api/admin/grievances/:id", requireRole(['Super Admin', 'GRM Officer', 'admin']), async (req, res) => {
     const { id } = req.params;
     const { status, assigned_to } = req.body;
     try {
@@ -253,6 +302,110 @@ async function startServer() {
     } catch (error) {
       res.status(500).json({ error: "Failed to update grievance" });
     }
+  });
+
+  // User Management Routes
+  app.get("/api/admin/users", requireRole(['Super Admin', 'GRM Officer', 'Viewer', 'admin']), (req, res) => {
+    const users = db.prepare("SELECT id, username, role, is_active, created_at FROM users").all();
+    res.json(users);
+  });
+
+  app.post("/api/admin/users", requireRole(['Super Admin', 'admin']), (req, res) => {
+    const { username, password, role } = req.body;
+    if (!username || !password || !role) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    try {
+      const hashedPassword = bcrypt.hashSync(password, 10);
+      const id = Math.random().toString(36).substring(2, 11);
+      db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(id, username, hashedPassword, role);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create user (username might already exist)" });
+    }
+  });
+
+  app.delete("/api/admin/users/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+    const { id } = req.params;
+    if (id === (req.session as any).userId) {
+      return res.status(400).json({ error: "Cannot delete your own account" });
+    }
+    try {
+      db.prepare("DELETE FROM users WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  });
+
+  app.patch("/api/admin/users/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+    const { id } = req.params;
+    const { role, is_active } = req.body;
+    
+    try {
+      if (role !== undefined) {
+        db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
+      }
+      if (is_active !== undefined) {
+        // Prevent deactivating self
+        if (id === (req.session as any).userId && is_active === 0) {
+          return res.status(400).json({ error: "You cannot deactivate your own account" });
+        }
+        db.prepare("UPDATE users SET is_active = ? WHERE id = ?").run(is_active ? 1 : 0, id);
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  // Category Management Routes
+  app.get("/api/categories", (req, res) => {
+    try {
+      const categories = db.prepare("SELECT * FROM categories ORDER BY name ASC").all();
+      res.json(categories);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+
+  app.post("/api/admin/categories", requireRole(['Super Admin', 'admin']), (req, res) => {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: "Category name is required" });
+    try {
+      const id = Math.random().toString(36).substring(2, 11);
+      db.prepare("INSERT INTO categories (id, name) VALUES (?, ?)").run(id, name);
+      res.json({ success: true, id, name });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create category (it might already exist)" });
+    }
+  });
+
+  app.patch("/api/admin/categories/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+    const { id } = req.params;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: "Category name is required" });
+    try {
+      db.prepare("UPDATE categories SET name = ? WHERE id = ?").run(name, id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update category" });
+    }
+  });
+
+  app.delete("/api/admin/categories/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+    const { id } = req.params;
+    try {
+      db.prepare("DELETE FROM categories WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+
+  // Catch-all for API routes to prevent falling through to SPA fallback
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: "API route not found" });
   });
 
   // Vite middleware for development

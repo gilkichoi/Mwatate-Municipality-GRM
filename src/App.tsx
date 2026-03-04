@@ -21,8 +21,19 @@ import {
   UserPlus,
   Download,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Tag,
+  Edit2,
+  Trash2,
+  TrendingUp,
+  PieChart as PieChartIcon,
+  BarChart as BarChartIcon,
+  Activity
 } from 'lucide-react';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
+} from 'recharts';
 import { Grievance, GrievanceCategory } from './types';
 
 interface User {
@@ -30,16 +41,6 @@ interface User {
   username: string;
   role: string;
 }
-
-const CATEGORIES: GrievanceCategory[] = [
-  'Water & Sanitation',
-  'Roads & Infrastructure',
-  'Waste Management',
-  'Land & Physical Planning',
-  'Environment & Natural Resources',
-  'Trade & Markets',
-  'General Inquiry'
-];
 
 const OFFICIALS = [
   'Eng. James Mwangi (Water)',
@@ -62,7 +63,7 @@ export default function App() {
 
   const checkAuth = async () => {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await fetch('/api/auth/me', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
@@ -76,7 +77,10 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/auth/logout', { 
+        method: 'POST',
+        credentials: 'include'
+      });
       setUser(null);
       setView('home');
     } catch (err) {
@@ -199,6 +203,15 @@ export default function App() {
 }
 
 function HomeView({ onNavigate }: { onNavigate: (view: 'submit' | 'track') => void }) {
+  const [categories, setCategories] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch('/api/categories', { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => setCategories(data))
+      .catch(err => console.error('Failed to fetch categories:', err));
+  }, []);
+
   return (
     <div className="animate-in fade-in duration-500">
       {/* Hero Section */}
@@ -284,12 +297,12 @@ function HomeView({ onNavigate }: { onNavigate: (view: 'submit' | 'track') => vo
             </button>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {CATEGORIES.slice(0, 4).map((cat, i) => (
+            {categories.slice(0, 4).map((cat, i) => (
               <div key={i} className="bg-white p-6 rounded-xl border border-slate-200 flex flex-col items-center text-center hover:border-emerald-200 hover:bg-emerald-50/30 transition-all cursor-pointer group">
                 <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-4 group-hover:bg-emerald-100 group-hover:text-emerald-600 transition-colors">
                   <BarChart3 size={24} />
                 </div>
-                <span className="font-semibold text-slate-800">{cat}</span>
+                <span className="font-semibold text-slate-800">{cat.name}</span>
               </div>
             ))}
           </div>
@@ -300,6 +313,7 @@ function HomeView({ onNavigate }: { onNavigate: (view: 'submit' | 'track') => vo
 }
 
 function SubmitView({ onBack }: { onBack: () => void }) {
+  const [categories, setCategories] = useState<any[]>([]);
   const [formData, setFormData] = useState({
     title: '',
     category: '',
@@ -311,6 +325,13 @@ function SubmitView({ onBack }: { onBack: () => void }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
 
+  useEffect(() => {
+    fetch('/api/categories', { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => setCategories(data))
+      .catch(err => console.error('Failed to fetch categories:', err));
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -318,15 +339,20 @@ function SubmitView({ onBack }: { onBack: () => void }) {
       const res = await fetch('/api/grievances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(formData)
       });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Submission failed: ${res.status}`);
+      }
       const data = await res.json();
       if (data.success) {
         setSubmitted(data.tracking_number);
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to submit. Please try again.');
+      alert(err instanceof Error ? err.message : 'Failed to submit. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -399,7 +425,7 @@ function SubmitView({ onBack }: { onBack: () => void }) {
                 onChange={e => setFormData({ ...formData, category: e.target.value })}
               >
                 <option value="">Select a category</option>
-                {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
               </select>
             </div>
 
@@ -486,16 +512,16 @@ function TrackView() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/grievances/${trackingNumber}`);
-      if (res.ok) {
-        const data = await res.json();
-        setGrievance(data);
-      } else {
-        setError('Grievance not found. Please check your tracking number.');
-        setGrievance(null);
+      const res = await fetch(`/api/grievances/${trackingNumber}`, { credentials: 'include' });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Search failed: ${res.status}`);
       }
+      const data = await res.json();
+      setGrievance(data);
     } catch (err) {
-      setError('An error occurred. Please try again.');
+      setError(err instanceof Error ? err.message : 'Grievance not found or an error occurred.');
+      setGrievance(null);
     } finally {
       setLoading(false);
     }
@@ -621,6 +647,7 @@ function TrackView() {
 }
 
 function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
+  const [activeTab, setActiveTab] = useState<'grievances' | 'users' | 'categories' | 'dashboard'>('dashboard');
   const [grievances, setGrievances] = useState<Grievance[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedGrievance, setSelectedGrievance] = useState<Grievance | null>(null);
@@ -628,6 +655,12 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const triggerSuccess = (msg: string) => {
+    setSuccessMessage(msg);
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
 
   const filteredGrievances = (Array.isArray(grievances) ? grievances : []).filter(g => {
     const matchesSearch = g.tracking_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -652,7 +685,11 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
 
   const fetchGrievances = async () => {
     try {
-      const res = await fetch('/api/admin/grievances');
+      const res = await fetch('/api/admin/grievances', { credentials: 'include' });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch grievances: ${res.status}`);
+      }
       const data = await res.json();
       if (Array.isArray(data)) {
         setGrievances(data);
@@ -679,6 +716,7 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
       if (selectedGrievance?.id === id) {
         setSelectedGrievance({ ...selectedGrievance, status: status as any });
       }
+      triggerSuccess('Status updated successfully');
     } catch (err) {
       console.error(err);
     }
@@ -695,6 +733,7 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
       if (selectedGrievance?.id === id) {
         setSelectedGrievance({ ...selectedGrievance, assigned_to });
       }
+      triggerSuccess('Official assigned successfully');
     } catch (err) {
       console.error(err);
     }
@@ -740,6 +779,33 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
           <h2 className="text-3xl font-bold text-slate-900">Admin Dashboard</h2>
           <p className="text-slate-600">Manage and resolve citizen grievances.</p>
           <div className="flex items-center gap-4 mt-4">
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+              <button 
+                onClick={() => setActiveTab('dashboard')}
+                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'dashboard' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Dashboard
+              </button>
+              <button 
+                onClick={() => setActiveTab('grievances')}
+                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'grievances' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Grievances
+              </button>
+              <button 
+                onClick={() => setActiveTab('users')}
+                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                User Management
+              </button>
+              <button 
+                onClick={() => setActiveTab('categories')}
+                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'categories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Categories
+              </button>
+            </div>
+            <div className="h-8 w-px bg-slate-200"></div>
             <button 
               onClick={exportToCSV}
               className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-lg text-sm font-bold hover:bg-emerald-100 transition-all"
@@ -777,7 +843,8 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      {activeTab === 'grievances' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* List */}
         <div className="lg:col-span-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-[700px] flex flex-col">
           <div className="p-4 border-b border-slate-100 bg-slate-50 space-y-3">
@@ -916,11 +983,26 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                     <p className="text-sm text-slate-500">{new Date(selectedGrievance.created_at).toLocaleString()}</p>
                   </div>
                 </div>
-                <div className="flex gap-4 items-end">
+                <div className="flex flex-col items-end gap-2">
+                  <AnimatePresence>
+                    {successMessage && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-lg shadow-emerald-500/20"
+                      >
+                        <CheckCircle2 size={12} />
+                        {successMessage}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <div className="flex gap-4 items-end">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</label>
                     <select 
-                      className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium outline-none bg-white"
+                      disabled={user.role === 'Viewer'}
+                      className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium outline-none bg-white disabled:bg-slate-50 disabled:text-slate-400"
                       value={selectedGrievance.status}
                       onChange={(e) => updateStatus(selectedGrievance.id, e.target.value)}
                     >
@@ -942,7 +1024,8 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Assign To</label>
                     <select 
-                      className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium outline-none bg-white"
+                      disabled={user.role === 'Viewer'}
+                      className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium outline-none bg-white disabled:bg-slate-50 disabled:text-slate-400"
                       value={selectedGrievance.assigned_to || ''}
                       onChange={(e) => assignOfficial(selectedGrievance.id, e.target.value)}
                     >
@@ -954,7 +1037,8 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                   </div>
                 </div>
               </div>
-              <div className="p-8 overflow-y-auto space-y-8">
+            </div>
+            <div className="p-8 overflow-y-auto space-y-8">
                 <div className="grid grid-cols-3 gap-8">
                   <div>
                     <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Category</h4>
@@ -1005,6 +1089,642 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
           )}
         </div>
       </div>
+    ) : activeTab === 'dashboard' ? (
+      <DashboardView grievances={grievances} />
+    ) : activeTab === 'users' ? (
+      <UserManagementView user={user} />
+    ) : (
+      <CategoryManagementView user={user} />
+    )}
+    </div>
+  );
+}
+
+function DashboardView({ grievances }: { grievances: Grievance[] }) {
+  const statusData = [
+    { name: 'Pending', value: grievances.filter(g => g.status === 'Pending').length, color: '#94a3b8' },
+    { name: 'In Progress', value: grievances.filter(g => g.status === 'In Progress').length, color: '#3b82f6' },
+    { name: 'Resolved', value: grievances.filter(g => g.status === 'Resolved').length, color: '#10b981' },
+    { name: 'Rejected', value: grievances.filter(g => g.status === 'Rejected').length, color: '#ef4444' },
+  ].filter(d => d.value > 0);
+
+  const priorityData = [
+    { name: 'Low', value: grievances.filter(g => g.priority === 'Low').length, color: '#94a3b8' },
+    { name: 'Medium', value: grievances.filter(g => g.priority === 'Medium').length, color: '#3b82f6' },
+    { name: 'High', value: grievances.filter(g => g.priority === 'High').length, color: '#f59e0b' },
+    { name: 'Urgent', value: grievances.filter(g => g.priority === 'Urgent').length, color: '#ef4444' },
+  ];
+
+  const categoryCounts: Record<string, number> = {};
+  grievances.forEach(g => {
+    categoryCounts[g.category] = (categoryCounts[g.category] || 0) + 1;
+  });
+  const categoryData = Object.entries(categoryCounts)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+
+  // Group by date for line chart
+  const dateCounts: Record<string, number> = {};
+  grievances.forEach(g => {
+    const date = new Date(g.created_at).toLocaleDateString();
+    dateCounts[date] = (dateCounts[date] || 0) + 1;
+  });
+  const timeData = Object.entries(dateCounts)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .slice(-7); // Last 7 days with data
+
+  const stats = [
+    { label: 'Total Grievances', value: grievances.length, icon: <FileText size={20} />, color: 'bg-slate-100 text-slate-600' },
+    { label: 'Pending', value: grievances.filter(g => g.status === 'Pending').length, icon: <Clock size={20} />, color: 'bg-amber-50 text-amber-600' },
+    { label: 'Resolved', value: grievances.filter(g => g.status === 'Resolved').length, icon: <CheckCircle2 size={20} />, color: 'bg-emerald-50 text-emerald-600' },
+    { label: 'Resolution Rate', value: grievances.length ? Math.round((grievances.filter(g => g.status === 'Resolved').length / grievances.length) * 100) + '%' : '0%', icon: <TrendingUp size={20} />, color: 'bg-blue-50 text-blue-600' },
+  ];
+
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {stats.map((stat, i) => (
+          <div key={i} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${stat.color}`}>
+              {stat.icon}
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">{stat.label}</p>
+              <p className="text-2xl font-bold text-slate-900">{stat.value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Status Distribution */}
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between mb-8">
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <PieChartIcon size={20} className="text-emerald-600" />
+              Status Distribution
+            </h3>
+          </div>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={100}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {statusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="bottom" height={36}/>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Priority Distribution */}
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between mb-8">
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <BarChartIcon size={20} className="text-emerald-600" />
+              Priority Levels
+            </h3>
+          </div>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={priorityData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <Tooltip cursor={{fill: '#f8fafc'}} />
+                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                  {priorityData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Category Distribution */}
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm lg:col-span-2">
+          <div className="flex items-center justify-between mb-8">
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Activity size={20} className="text-emerald-600" />
+              Grievances by Category
+            </h3>
+          </div>
+          <div className="h-[350px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={categoryData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                <XAxis type="number" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} width={150} />
+                <Tooltip cursor={{fill: '#f8fafc'}} />
+                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Trends over time */}
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm lg:col-span-2">
+          <div className="flex items-center justify-between mb-8">
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <TrendingUp size={20} className="text-emerald-600" />
+              Submission Trends (Last 7 Days with Activity)
+            </h3>
+          </div>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={timeData}>
+                <defs>
+                  <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <Tooltip />
+                <Area type="monotone" dataKey="count" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorCount)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CategoryManagementView({ user }: { user: User }) {
+  const [categories, setCategories] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [editingCategory, setEditingCategory] = useState<any | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const isSuperAdmin = user.role === 'Super Admin' || user.role === 'admin';
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch('/api/categories', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch categories');
+      const data = await res.json();
+      setCategories(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: newCategoryName })
+      });
+      if (res.ok) {
+        setNewCategoryName('');
+        fetchCategories();
+      } else {
+        const data = await res.json();
+        setError(data.error);
+      }
+    } catch (err) {
+      setError('Failed to create category');
+    }
+  };
+
+  const handleUpdateCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCategory) return;
+    try {
+      const res = await fetch(`/api/admin/categories/${editingCategory.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: editingCategory.name })
+      });
+      if (res.ok) {
+        setEditingCategory(null);
+        fetchCategories();
+      } else {
+        const data = await res.json();
+        alert(data.error);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this category?')) return;
+    try {
+      const res = await fetch(`/api/admin/categories/${id}`, { 
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (res.ok) {
+        fetchCategories();
+      } else {
+        const data = await res.json();
+        alert(data.error);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  if (loading) return <div className="p-12 text-center">Loading categories...</div>;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {isSuperAdmin && (
+        <div className="lg:col-span-1">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+              <Tag size={20} className="text-emerald-600" />
+              {editingCategory ? 'Edit Category' : 'Add New Category'}
+            </h3>
+            <form onSubmit={editingCategory ? handleUpdateCategory : handleCreateCategory} className="space-y-4">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-100 text-red-600 text-xs rounded-lg flex items-center gap-2">
+                  <AlertCircle size={14} />
+                  {error}
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Category Name</label>
+                <input 
+                  required
+                  type="text"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm"
+                  value={editingCategory ? editingCategory.name : newCategoryName}
+                  onChange={e => editingCategory ? setEditingCategory({...editingCategory, name: e.target.value}) : setNewCategoryName(e.target.value)}
+                  placeholder="e.g., Waste Management"
+                />
+              </div>
+              <div className="flex gap-2">
+                {editingCategory && (
+                  <button 
+                    type="button"
+                    onClick={() => setEditingCategory(null)}
+                    className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all"
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button 
+                  type="submit"
+                  className="flex-[2] py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
+                >
+                  {editingCategory ? 'Update Category' : 'Create Category'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className={isSuperAdmin ? "lg:col-span-2" : "lg:col-span-3"}>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Category Name</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Created</th>
+                {isSuperAdmin && <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Actions</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {categories.map(cat => (
+                <tr key={cat.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-6 py-4">
+                    <span className="font-semibold text-slate-800">{cat.name}</span>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-500">
+                    {new Date(cat.created_at).toLocaleDateString()}
+                  </td>
+                  {isSuperAdmin && (
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => setEditingCategory(cat)}
+                          className="text-slate-400 hover:text-emerald-600 p-2 hover:bg-emerald-50 rounded-lg transition-all"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteCategory(cat.id)}
+                          className="text-slate-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg transition-all"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserManagementView({ user }: { user: User }) {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState('GRM Officer');
+  const [error, setError] = useState<string | null>(null);
+  const [userToDelete, setUserToDelete] = useState<any | null>(null);
+
+  const isSuperAdmin = user.role === 'Super Admin' || user.role === 'admin';
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch('/api/admin/users', { credentials: 'include' });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch users: ${res.status}`);
+      }
+      const data = await res.json();
+      setUsers(data);
+    } catch (err) {
+      console.error('Failed to fetch users:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username: newUsername, password: newPassword, role: newRole })
+      });
+      if (res.ok) {
+        setNewUsername('');
+        setNewPassword('');
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        setError(data.error);
+      }
+    } catch (err) {
+      setError('Failed to create user');
+    }
+  };
+
+  const handleDeleteUser = (u: any) => {
+    setUserToDelete(u);
+  };
+
+  const confirmDelete = async () => {
+    if (!userToDelete) return;
+    try {
+      const res = await fetch(`/api/admin/users/${userToDelete.id}`, { 
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (res.ok) {
+        fetchUsers();
+        setUserToDelete(null);
+      } else {
+        const data = await res.json();
+        alert(data.error);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleUpdateUser = async (id: string, updates: any) => {
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(updates)
+      });
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        alert(data.error);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  if (loading) return <div className="p-12 text-center">Loading users...</div>;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {isSuperAdmin && (
+        <div className="lg:col-span-1">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+              <UserPlus size={20} className="text-emerald-600" />
+              Add New Staff Member
+            </h3>
+            <form onSubmit={handleCreateUser} className="space-y-4">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-100 text-red-600 text-xs rounded-lg flex items-center gap-2">
+                  <AlertCircle size={14} />
+                  {error}
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Username</label>
+                <input 
+                  required
+                  type="text"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm"
+                  value={newUsername}
+                  onChange={e => setNewUsername(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Password</label>
+                <input 
+                  required
+                  type="password"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Role</label>
+                <select 
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm bg-white"
+                  value={newRole}
+                  onChange={e => setNewRole(e.target.value)}
+                >
+                  <option value="Super Admin">Super Admin</option>
+                  <option value="GRM Officer">GRM Officer</option>
+                  <option value="Viewer">Viewer</option>
+                </select>
+              </div>
+              <button 
+                type="submit"
+                className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
+              >
+                Create Account
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className={isSuperAdmin ? "lg:col-span-2" : "lg:col-span-3"}>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">User</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Role</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Created</th>
+                {isSuperAdmin && <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Actions</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {users.map(u => (
+                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
+                        <User size={14} />
+                      </div>
+                      <span className="font-semibold text-slate-800">{u.username}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    {isSuperAdmin ? (
+                      <select 
+                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase outline-none cursor-pointer transition-all ${
+                          u.role === 'Super Admin' || u.role === 'admin' ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' :
+                          u.role === 'GRM Officer' ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' :
+                          'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                        value={u.role}
+                        onChange={(e) => handleUpdateUser(u.id, { role: e.target.value })}
+                      >
+                        <option value="Super Admin">Super Admin</option>
+                        <option value="GRM Officer">GRM Officer</option>
+                        <option value="Viewer">Viewer</option>
+                      </select>
+                    ) : (
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                        u.role === 'Super Admin' || u.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                        u.role === 'GRM Officer' ? 'bg-blue-100 text-blue-700' :
+                        'bg-slate-100 text-slate-600'
+                      }`}>
+                        {u.role}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    <button
+                      disabled={!isSuperAdmin}
+                      onClick={() => handleUpdateUser(u.id, { is_active: !u.is_active })}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase transition-all ${
+                        u.is_active ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-red-100 text-red-700 hover:bg-red-200'
+                      } disabled:cursor-default`}
+                    >
+                      {u.is_active ? 'Active' : 'Inactive'}
+                    </button>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-500">
+                    {new Date(u.created_at).toLocaleDateString()}
+                  </td>
+                  {isSuperAdmin && (
+                    <td className="px-6 py-4 text-right">
+                      <button 
+                        onClick={() => handleDeleteUser(u)}
+                        className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-lg transition-all"
+                      >
+                        <X size={16} />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {userToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+            >
+              <div className="p-8 text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <AlertCircle size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">Delete User Account?</h3>
+                <p className="text-slate-600 mb-8">
+                  Are you sure you want to delete <span className="font-bold text-slate-900">@{userToDelete.username}</span>? This action cannot be undone.
+                </p>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setUserToDelete(null)}
+                    className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={confirmDelete}
+                    className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-600/20"
+                  >
+                    Delete User
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1023,6 +1743,7 @@ function LoginView({ onLogin }: { onLogin: (user: User) => void }) {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ username, password })
       });
       const data = await res.json();

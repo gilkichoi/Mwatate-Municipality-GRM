@@ -13,11 +13,4 @@ export interface Grievance {
   updated_at: string;
 }
 
-export type GrievanceCategory = 
-  | 'Water & Sanitation'
-  | 'Roads & Infrastructure'
-  | 'Waste Management'
-  | 'Land & Physical Planning'
-  | 'Environment & Natural Resources'
-  | 'Trade & Markets'
-  | 'General Inquiry';
+export type GrievanceCategory = string;
