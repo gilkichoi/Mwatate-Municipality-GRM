@@ -735,7 +735,26 @@ function TrackView() {
                       </div>
                       <div>
                         <p className="text-sm font-bold text-slate-800">Status Updated to {grievance.status}</p>
-                        <p className="text-xs text-slate-500">{new Date(grievance.updated_at).toLocaleString()}</p>
+                        <p className="text-xs text-slate-500 mb-2">{new Date(grievance.updated_at).toLocaleString()}</p>
+                        
+                        {(grievance.resolution_comment || grievance.resolution_report_url) && (
+                          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mt-2 space-y-3">
+                            {grievance.resolution_comment && (
+                              <div>
+                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Resolution Note</p>
+                                <p className="text-sm text-slate-700">{grievance.resolution_comment}</p>
+                              </div>
+                            )}
+                            {grievance.resolution_report_url && (
+                              <div>
+                                <a href={grievance.resolution_report_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-xs text-emerald-600 hover:text-emerald-700 font-bold bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm transition-colors">
+                                  <Download size={14} />
+                                  Download Resolution Report
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -804,9 +823,15 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  const [statusUpdateModal, setStatusUpdateModal] = useState<{ grievanceId: string, newStatus: string } | null>(null);
+  const [resolutionComment, setResolutionComment] = useState('');
+  const [resolutionReportUrl, setResolutionReportUrl] = useState('');
+  const [uploadingReport, setUploadingReport] = useState(false);
 
   const triggerSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -824,8 +849,9 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
     
     const matchesPriority = priorityFilter ? g.priority === priorityFilter : true;
     const matchesStatus = statusFilter ? g.status === statusFilter : true;
+    const matchesAssignee = assigneeFilter ? (assigneeFilter === 'unassigned' ? !g.assigned_to : g.assigned_to === assigneeFilter) : true;
     
-    return matchesSearch && matchesPriority && matchesStatus;
+    return matchesSearch && matchesPriority && matchesStatus && matchesAssignee;
   });
 
   const sortedGrievances = [...filteredGrievances].sort((a, b) => {
@@ -877,18 +903,57 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
     }
   };
 
-  const updateStatus = async (id: string, status: string) => {
+  const handleStatusChangeClick = (id: string, newStatus: string) => {
+    if (newStatus === 'Resolved' || newStatus === 'Rejected') {
+      setStatusUpdateModal({ grievanceId: id, newStatus });
+      setResolutionComment('');
+      setResolutionReportUrl('');
+    } else {
+      updateStatus(id, newStatus);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingReport(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetchWithAuth('/api/admin/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setResolutionReportUrl(data.url);
+        triggerSuccess('Report uploaded successfully');
+      } else {
+        alert('Failed to upload report');
+      }
+    } catch (err) {
+      console.error('Upload error:', err);
+      alert('Failed to upload report');
+    } finally {
+      setUploadingReport(false);
+    }
+  };
+
+  const updateStatus = async (id: string, status: string, comment?: string, reportUrl?: string) => {
     try {
       await fetchWithAuth(`/api/admin/grievances/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status, resolution_comment: comment, resolution_report_url: reportUrl })
       });
       fetchGrievances();
       if (selectedGrievance?.id === id) {
-        setSelectedGrievance({ ...selectedGrievance, status: status as any });
+        setSelectedGrievance({ ...selectedGrievance, status: status as any, resolution_comment: comment, resolution_report_url: reportUrl });
       }
       triggerSuccess('Status updated successfully');
+      setStatusUpdateModal(null);
     } catch (err) {
       console.error(err);
     }
@@ -1004,6 +1069,14 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                     Categories
                   </button>
                 </>
+              )}
+              {user.role === 'Super Admin' && (
+                <button 
+                  onClick={() => setActiveTab('logs')}
+                  className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'logs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  System Logs
+                </button>
               )}
               <button 
                 onClick={() => setActiveTab('profile')}
@@ -1129,6 +1202,22 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                 );
               })}
             </div>
+            
+            {(user.role === 'Super Admin' || user.role === 'admin') && (
+              <div className="pt-1 border-t border-slate-100">
+                <select 
+                  className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium outline-none bg-white text-slate-700 focus:ring-2 focus:ring-emerald-500"
+                  value={assigneeFilter || ''}
+                  onChange={(e) => setAssigneeFilter(e.target.value || null)}
+                >
+                  <option value="">All Assignees</option>
+                  <option value="unassigned">Unassigned Only</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.username}>{u.username}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="overflow-y-auto flex-grow">
             {sortedGrievances.map(g => (
@@ -1198,7 +1287,7 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                       disabled={user.role === 'Viewer'}
                       className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium outline-none bg-white disabled:bg-slate-50 disabled:text-slate-400"
                       value={selectedGrievance.status}
-                      onChange={(e) => updateStatus(selectedGrievance.id, e.target.value)}
+                      onChange={(e) => handleStatusChangeClick(selectedGrievance.id, e.target.value)}
                     >
                       <option value="Pending">Pending</option>
                       <option value="In Progress">In Progress</option>
@@ -1286,6 +1375,29 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                   <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Description</h4>
                   <p className="text-slate-700 leading-relaxed bg-slate-50 p-6 rounded-xl border border-slate-100 whitespace-pre-wrap">{selectedGrievance.description}</p>
                 </div>
+                
+                {(selectedGrievance.resolution_comment || selectedGrievance.resolution_report_url) && (
+                  <div>
+                    <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Resolution Details</h4>
+                    <div className="bg-emerald-50 p-6 rounded-xl border border-emerald-100 space-y-4">
+                      {selectedGrievance.resolution_comment && (
+                        <div>
+                          <p className="text-sm font-bold text-emerald-800 mb-1">Comment</p>
+                          <p className="text-emerald-700 text-sm whitespace-pre-wrap">{selectedGrievance.resolution_comment}</p>
+                        </div>
+                      )}
+                      {selectedGrievance.resolution_report_url && (
+                        <div>
+                          <p className="text-sm font-bold text-emerald-800 mb-1">Attached Report</p>
+                          <a href={selectedGrievance.resolution_report_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-emerald-600 hover:text-emerald-700 font-medium bg-white px-3 py-2 rounded-lg border border-emerald-200 shadow-sm transition-colors">
+                            <Download size={16} />
+                            Download Report
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           ) : (
@@ -1304,9 +1416,81 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
       <UserManagementView user={user} onSuccess={triggerSuccess} />
     ) : activeTab === 'categories' ? (
       <CategoryManagementView user={user} onSuccess={triggerSuccess} />
+    ) : activeTab === 'logs' && user.role === 'Super Admin' ? (
+      <SystemLogsView />
     ) : activeTab === 'profile' ? (
       <ProfileView user={user} onSuccess={triggerSuccess} />
     ) : null}
+
+      <AnimatePresence>
+        {statusUpdateModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+            >
+              <div className="p-8">
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 ${statusUpdateModal.newStatus === 'Resolved' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                  {statusUpdateModal.newStatus === 'Resolved' ? <CheckCircle2 size={32} /> : <AlertCircle size={32} />}
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2 text-center">Mark as {statusUpdateModal.newStatus}?</h3>
+                <p className="text-slate-600 mb-6 text-center text-sm">
+                  Please provide a resolution comment {statusUpdateModal.newStatus === 'Resolved' && 'and optionally upload a report'} before updating the status.
+                </p>
+                
+                <div className="space-y-4 mb-8">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Resolution Comment *</label>
+                    <textarea 
+                      required
+                      rows={3}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm resize-none"
+                      value={resolutionComment}
+                      onChange={e => setResolutionComment(e.target.value)}
+                      placeholder="Explain how this grievance was handled..."
+                    />
+                  </div>
+                  
+                  {statusUpdateModal.newStatus === 'Resolved' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Resolution Report (Optional)</label>
+                      <div className="flex items-center gap-3">
+                        <label className="flex-1 cursor-pointer bg-slate-50 border border-slate-200 border-dashed rounded-xl p-4 text-center hover:bg-slate-100 transition-colors">
+                          <input type="file" className="hidden" onChange={handleFileUpload} accept=".pdf,.doc,.docx,.jpg,.png" />
+                          <div className="flex flex-col items-center gap-2">
+                            <Download size={20} className="text-slate-400" />
+                            <span className="text-sm font-medium text-slate-600">
+                              {uploadingReport ? 'Uploading...' : resolutionReportUrl ? 'Report Uploaded' : 'Click to upload file'}
+                            </span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setStatusUpdateModal(null)}
+                    className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    disabled={!resolutionComment.trim() || uploadingReport}
+                    onClick={() => updateStatus(statusUpdateModal.grievanceId, statusUpdateModal.newStatus, resolutionComment, resolutionReportUrl)}
+                    className={`flex-1 py-3 text-white rounded-xl font-bold transition-all shadow-lg disabled:opacity-50 ${statusUpdateModal.newStatus === 'Resolved' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20' : 'bg-red-600 hover:bg-red-700 shadow-red-600/20'}`}
+                  >
+                    Confirm Update
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1484,6 +1668,7 @@ function CategoryManagementView({ user, onSuccess }: { user: User, onSuccess: (m
   const [newCategoryName, setNewCategoryName] = useState('');
   const [editingCategory, setEditingCategory] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<any | null>(null);
 
   const isSuperAdmin = user.role === 'Super Admin' || user.role === 'admin';
 
@@ -1549,7 +1734,6 @@ function CategoryManagementView({ user, onSuccess }: { user: User, onSuccess: (m
   };
 
   const handleDeleteCategory = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this category?')) return;
     try {
       const res = await fetchWithAuth(`/api/admin/categories/${id}`, { 
         method: 'DELETE'
@@ -1557,6 +1741,7 @@ function CategoryManagementView({ user, onSuccess }: { user: User, onSuccess: (m
       if (res.ok) {
         fetchCategories();
         onSuccess('Category deleted successfully');
+        setCategoryToDelete(null);
       } else {
         const data = await res.json();
         alert(data.error);
@@ -1646,7 +1831,7 @@ function CategoryManagementView({ user, onSuccess }: { user: User, onSuccess: (m
                           <Edit2 size={16} />
                         </button>
                         <button 
-                          onClick={() => handleDeleteCategory(cat.id)}
+                          onClick={() => setCategoryToDelete(cat)}
                           className="text-slate-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg transition-all"
                         >
                           <Trash2 size={16} />
@@ -1660,6 +1845,43 @@ function CategoryManagementView({ user, onSuccess }: { user: User, onSuccess: (m
           </table>
         </div>
       </div>
+
+      <AnimatePresence>
+        {categoryToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+            >
+              <div className="p-8 text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <AlertCircle size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">Delete Category?</h3>
+                <p className="text-slate-600 mb-8">
+                  Are you sure you want to delete <span className="font-bold text-slate-900">{categoryToDelete.name}</span>? This action cannot be undone.
+                </p>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setCategoryToDelete(null)}
+                    className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => handleDeleteCategory(categoryToDelete.id)}
+                    className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-600/20"
+                  >
+                    Delete Category
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1939,6 +2161,89 @@ function UserManagementView({ user, onSuccess }: { user: User, onSuccess: (msg: 
           </div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function SystemLogsView() {
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchLogs();
+  }, []);
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetchWithAuth('/api/admin/logs');
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch logs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) return <div className="p-12 text-center">Loading logs...</div>;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+        <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <ShieldCheck size={20} className="text-emerald-600" />
+          System Activity Logs
+        </h3>
+        <button onClick={fetchLogs} className="text-sm text-emerald-600 font-bold hover:text-emerald-700 flex items-center gap-1">
+          <ArrowUp size={14} className="rotate-45" /> Refresh
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-100">
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Timestamp</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Action</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">User</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Details</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {logs.map(log => (
+              <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
+                <td className="px-6 py-4 text-sm text-slate-500 whitespace-nowrap">
+                  {new Date(log.created_at).toLocaleString()}
+                </td>
+                <td className="px-6 py-4">
+                  <span className={`text-xs font-bold px-2 py-1 rounded-md uppercase tracking-wider ${
+                    log.action.includes('DELETE') ? 'bg-red-100 text-red-700' :
+                    log.action.includes('CREATE') ? 'bg-emerald-100 text-emerald-700' :
+                    log.action.includes('UPDATE') ? 'bg-blue-100 text-blue-700' :
+                    'bg-slate-100 text-slate-700'
+                  }`}>
+                    {log.action}
+                  </span>
+                </td>
+                <td className="px-6 py-4 text-sm font-medium text-slate-700">
+                  {log.username || 'System'}
+                </td>
+                <td className="px-6 py-4 text-sm text-slate-600">
+                  {log.details}
+                </td>
+              </tr>
+            ))}
+            {logs.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
+                  No system logs found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

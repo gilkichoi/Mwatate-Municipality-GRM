@@ -51,6 +51,15 @@ db.exec(`
     name TEXT UNIQUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS system_logs (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    user_id TEXT,
+    username TEXT,
+    details TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Seed initial categories if none exist
@@ -99,6 +108,15 @@ try { db.exec("ALTER TABLE grievances ADD COLUMN ward TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN resolution_comment TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN resolution_report_url TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1;"); } catch (e) {}
+
+const logAction = (action: string, userId: string | null, username: string | null, details: string) => {
+  try {
+    const id = Math.random().toString(36).substring(2, 15);
+    db.prepare('INSERT INTO system_logs (id, action, user_id, username, details) VALUES (?, ?, ?, ?, ?)').run(id, action, userId, username, details);
+  } catch (err) {
+    console.error('Failed to log action:', err);
+  }
+};
 
 // Email Transporter Helper (Lazy initialization)
 let transporter: nodemailer.Transporter | null = null;
@@ -249,7 +267,7 @@ async function startServer() {
     }
   };
 
-  app.post("/api/admin/upload", requireAuth, upload.single('file'), (req, res) => {
+  app.post("/api/admin/upload", requireAuth, upload.single('file'), (req: any, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
@@ -272,6 +290,8 @@ async function startServer() {
         JWT_SECRET,
         { expiresIn: '30d' }
       );
+      
+      logAction('LOGIN', user.id, user.username, 'User logged in successfully');
       
       res.json({ success: true, token, user: { id: user.id, username: user.username, role: user.role } });
     } else {
@@ -336,12 +356,12 @@ async function startServer() {
     res.json(grievances);
   });
 
-  app.patch("/api/admin/grievances/:id", requireRole(['Super Admin', 'GRM Officer', 'admin']), async (req, res) => {
+  app.patch("/api/admin/grievances/:id", requireRole(['Super Admin', 'GRM Officer', 'admin']), async (req: any, res) => {
     const { id } = req.params;
     const { status, assigned_to, resolution_comment, resolution_report_url } = req.body;
     try {
       // Get current grievance info for notification
-      const grievance = db.prepare("SELECT * FROM grievances WHERE id = ?").get(id);
+      const grievance: any = db.prepare("SELECT * FROM grievances WHERE id = ?").get(id);
       
       if (!grievance) {
         return res.status(404).json({ error: "Grievance not found" });
@@ -349,20 +369,27 @@ async function startServer() {
 
       if (status !== undefined && assigned_to !== undefined) {
         // Validate user exists
-        const user = db.prepare("SELECT id FROM users WHERE id = ?").get(assigned_to);
-        if (!user) {
-          return res.status(400).json({ error: "Assigned user not found" });
+        if (assigned_to) {
+          const user = db.prepare("SELECT id FROM users WHERE username = ?").get(assigned_to);
+          if (!user) {
+            return res.status(400).json({ error: "Assigned user not found" });
+          }
         }
-        db.prepare("UPDATE grievances SET status = ?, assigned_to = ?, resolution_comment = ?, resolution_report_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, assigned_to, resolution_comment || grievance.resolution_comment, resolution_report_url || grievance.resolution_report_url, id);
+        db.prepare("UPDATE grievances SET status = ?, assigned_to = ?, resolution_comment = ?, resolution_report_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, assigned_to || null, resolution_comment || grievance.resolution_comment, resolution_report_url || grievance.resolution_report_url, id);
+        logAction('UPDATE_GRIEVANCE', req.user.userId, req.user.username, `Updated status to ${status} and assigned to ${assigned_to || 'Unassigned'} for grievance ${grievance.tracking_number}`);
       } else if (status !== undefined) {
         db.prepare("UPDATE grievances SET status = ?, resolution_comment = ?, resolution_report_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, resolution_comment || grievance.resolution_comment, resolution_report_url || grievance.resolution_report_url, id);
+        logAction('UPDATE_GRIEVANCE', req.user.userId, req.user.username, `Updated status to ${status} for grievance ${grievance.tracking_number}`);
       } else if (assigned_to !== undefined) {
         // Validate user exists
-        const user = db.prepare("SELECT id FROM users WHERE id = ?").get(assigned_to);
-        if (!user) {
-          return res.status(400).json({ error: "Assigned user not found" });
+        if (assigned_to) {
+          const user = db.prepare("SELECT id FROM users WHERE username = ?").get(assigned_to);
+          if (!user) {
+            return res.status(400).json({ error: "Assigned user not found" });
+          }
         }
-        db.prepare("UPDATE grievances SET assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(assigned_to, id);
+        db.prepare("UPDATE grievances SET assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(assigned_to || null, id);
+        logAction('UPDATE_GRIEVANCE', req.user.userId, req.user.username, `Assigned grievance ${grievance.tracking_number} to ${assigned_to || 'Unassigned'}`);
       }
 
       // Send notification if status changed and email is provided
@@ -386,7 +413,7 @@ async function startServer() {
     res.json(users);
   });
 
-  app.post("/api/admin/users", requireRole(['Super Admin', 'admin']), (req, res) => {
+  app.post("/api/admin/users", requireRole(['Super Admin', 'admin']), (req: any, res) => {
     const { username, password, role } = req.body;
     if (!username || !password || !role) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -395,6 +422,7 @@ async function startServer() {
       const hashedPassword = bcrypt.hashSync(password, 10);
       const id = Math.random().toString(36).substring(2, 11);
       db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)").run(id, username, hashedPassword, role);
+      logAction('CREATE_USER', req.user.userId, req.user.username, `Created user ${username} with role ${role}`);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to create user (username might already exist)" });
@@ -407,7 +435,11 @@ async function startServer() {
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
     try {
+      const userToDelete: any = db.prepare("SELECT username FROM users WHERE id = ?").get(id);
       db.prepare("DELETE FROM users WHERE id = ?").run(id);
+      if (userToDelete) {
+        logAction('DELETE_USER', req.user.userId, req.user.username, `Deleted user ${userToDelete.username}`);
+      }
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete user" });
@@ -419,8 +451,11 @@ async function startServer() {
     const { role, is_active } = req.body;
     
     try {
+      const targetUser: any = db.prepare("SELECT username FROM users WHERE id = ?").get(id);
+      
       if (role !== undefined) {
         db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
+        logAction('UPDATE_USER', req.user.userId, req.user.username, `Updated role for user ${targetUser?.username} to ${role}`);
       }
       if (is_active !== undefined) {
         // Prevent deactivating self
@@ -428,6 +463,7 @@ async function startServer() {
           return res.status(400).json({ error: "You cannot deactivate your own account" });
         }
         db.prepare("UPDATE users SET is_active = ? WHERE id = ?").run(is_active ? 1 : 0, id);
+        logAction('UPDATE_USER', req.user.userId, req.user.username, `${is_active ? 'Activated' : 'Deactivated'} user ${targetUser?.username}`);
       }
       res.json({ success: true });
     } catch (error) {
@@ -445,37 +481,53 @@ async function startServer() {
     }
   });
 
-  app.post("/api/admin/categories", requireRole(['Super Admin', 'admin']), (req, res) => {
+  app.post("/api/admin/categories", requireRole(['Super Admin', 'admin']), (req: any, res) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: "Category name is required" });
     try {
       const id = Math.random().toString(36).substring(2, 11);
       db.prepare("INSERT INTO categories (id, name) VALUES (?, ?)").run(id, name);
+      logAction('CREATE_CATEGORY', req.user.userId, req.user.username, `Created category ${name}`);
       res.json({ success: true, id, name });
     } catch (error) {
       res.status(500).json({ error: "Failed to create category (it might already exist)" });
     }
   });
 
-  app.patch("/api/admin/categories/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+  app.patch("/api/admin/categories/:id", requireRole(['Super Admin', 'admin']), (req: any, res) => {
     const { id } = req.params;
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: "Category name is required" });
     try {
+      const oldCategory: any = db.prepare("SELECT name FROM categories WHERE id = ?").get(id);
       db.prepare("UPDATE categories SET name = ? WHERE id = ?").run(name, id);
+      logAction('UPDATE_CATEGORY', req.user.userId, req.user.username, `Renamed category from ${oldCategory?.name} to ${name}`);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to update category" });
     }
   });
 
-  app.delete("/api/admin/categories/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+  app.delete("/api/admin/categories/:id", requireRole(['Super Admin', 'admin']), (req: any, res) => {
     const { id } = req.params;
     try {
+      const categoryToDelete: any = db.prepare("SELECT name FROM categories WHERE id = ?").get(id);
       db.prepare("DELETE FROM categories WHERE id = ?").run(id);
+      if (categoryToDelete) {
+        logAction('DELETE_CATEGORY', req.user.userId, req.user.username, `Deleted category ${categoryToDelete.name}`);
+      }
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+
+  app.get("/api/admin/logs", requireRole(['Super Admin']), (req: any, res) => {
+    try {
+      const logs = db.prepare("SELECT * FROM system_logs ORDER BY created_at DESC LIMIT 200").all();
+      res.json(logs);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch logs" });
     }
   });
 
