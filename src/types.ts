@@ -14,6 +14,8 @@ export interface Grievance {
   priority: 'Low' | 'Medium' | 'High' | 'Urgent';
   status: 'Pending' | 'In Progress' | 'Resolved' | 'Rejected';
   assigned_to?: string;
+  resolution_comment?: string;
+  resolution_report_url?: string;
   created_at: string;
   updated_at: string;
 }

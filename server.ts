@@ -7,6 +7,8 @@ import nodemailer from "nodemailer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cors from "cors";
+import multer from "multer";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -94,6 +96,8 @@ try { db.exec("ALTER TABLE grievances ADD COLUMN phone_number TEXT;"); } catch (
 try { db.exec("ALTER TABLE grievances ADD COLUMN email TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN gender TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN ward TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN resolution_comment TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN resolution_report_url TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1;"); } catch (e) {}
 
 // Email Transporter Helper (Lazy initialization)
@@ -185,6 +189,25 @@ async function startServer() {
   }));
   app.use(express.json());
 
+  // Configure multer for file uploads
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uploadDir = path.join(__dirname, 'uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir);
+      }
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, uniqueSuffix + '-' + file.originalname);
+    }
+  });
+  const upload = multer({ storage });
+
+  // Serve uploads folder statically
+  app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
   const JWT_SECRET = process.env.JWT_SECRET || "mwatate-municipality-jwt-secret";
 
   // Auth Middleware
@@ -225,6 +248,14 @@ async function startServer() {
       return res.status(401).json({ error: "Unauthorized: Invalid token" });
     }
   };
+
+  app.post("/api/admin/upload", requireAuth, upload.single('file'), (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+    const fileUrl = `/uploads/${req.file.filename}`;
+    res.json({ url: fileUrl });
+  });
 
   // Auth Routes
   app.post("/api/auth/login", (req, res) => {
@@ -307,7 +338,7 @@ async function startServer() {
 
   app.patch("/api/admin/grievances/:id", requireRole(['Super Admin', 'GRM Officer', 'admin']), async (req, res) => {
     const { id } = req.params;
-    const { status, assigned_to } = req.body;
+    const { status, assigned_to, resolution_comment, resolution_report_url } = req.body;
     try {
       // Get current grievance info for notification
       const grievance = db.prepare("SELECT * FROM grievances WHERE id = ?").get(id);
@@ -322,9 +353,9 @@ async function startServer() {
         if (!user) {
           return res.status(400).json({ error: "Assigned user not found" });
         }
-        db.prepare("UPDATE grievances SET status = ?, assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, assigned_to, id);
+        db.prepare("UPDATE grievances SET status = ?, assigned_to = ?, resolution_comment = ?, resolution_report_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, assigned_to, resolution_comment || grievance.resolution_comment, resolution_report_url || grievance.resolution_report_url, id);
       } else if (status !== undefined) {
-        db.prepare("UPDATE grievances SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, id);
+        db.prepare("UPDATE grievances SET status = ?, resolution_comment = ?, resolution_report_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, resolution_comment || grievance.resolution_comment, resolution_report_url || grievance.resolution_report_url, id);
       } else if (assigned_to !== undefined) {
         // Validate user exists
         const user = db.prepare("SELECT id FROM users WHERE id = ?").get(assigned_to);
