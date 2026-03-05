@@ -28,13 +28,35 @@ import {
   TrendingUp,
   PieChart as PieChartIcon,
   BarChart as BarChartIcon,
-  Activity
+  Activity,
+  Globe
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import { Grievance, GrievanceCategory } from './types';
+
+// Auth Helper
+const getAuthToken = () => localStorage.getItem('mwatate_token');
+
+const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
+  const token = getAuthToken();
+  console.log('fetchWithAuth: token=', token);
+  const headers = new Headers(options.headers || {});
+  
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  } else {
+    console.warn('fetchWithAuth: No token found');
+  }
+  
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: 'include'
+  });
+};
 
 interface User {
   id: string;
@@ -63,13 +85,14 @@ export default function App() {
 
   const checkAuth = async () => {
     try {
-      const res = await fetch('/api/auth/me', { credentials: 'include' });
+      const res = await fetchWithAuth('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         console.log('Authenticated as:', data.user.username, 'Role:', data.user.role);
         setUser(data.user);
       } else {
         console.log('Not authenticated (Status:', res.status, ')');
+        localStorage.removeItem('mwatate_token');
       }
     } catch (err) {
       console.error('Auth check failed', err);
@@ -80,10 +103,10 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { 
-        method: 'POST',
-        credentials: 'include'
+      await fetchWithAuth('/api/auth/logout', { 
+        method: 'POST'
       });
+      localStorage.removeItem('mwatate_token');
       setUser(null);
       setView('home');
     } catch (err) {
@@ -183,7 +206,7 @@ export default function App() {
               <ul className="space-y-4 text-sm">
                 <li><button onClick={() => setView('submit')} className="hover:text-white transition-colors">Report a Grievance</button></li>
                 <li><button onClick={() => setView('track')} className="hover:text-white transition-colors">Check Status</button></li>
-                <li><a href="#" className="hover:text-white transition-colors">Municipality Website</a></li>
+                <li><a href="https://taitataveta.go.ke/mwatate-municipality/" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Municipality Website</a></li>
                 <li><a href="#" className="hover:text-white transition-colors">County Government</a></li>
               </ul>
             </div>
@@ -191,8 +214,8 @@ export default function App() {
               <h3 className="text-white font-semibold mb-6">Contact Us</h3>
               <ul className="space-y-4 text-sm">
                 <li className="flex items-center gap-3"><MapPin size={16} /> Mwatate Town, Taita Taveta</li>
-                <li className="flex items-center gap-3"><Phone size={16} /> +254 (0) 123 456 789</li>
-                <li className="flex items-center gap-3"><AlertCircle size={16} /> Emergency: 999</li>
+                <li className="flex items-center gap-3"><Phone size={16} /> 0116198683</li>
+                <li className="flex items-center gap-3"><Globe size={16} /> <a href="https://taitataveta.go.ke/mwatate-municipality/" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Municipality Website</a></li>
               </ul>
             </div>
           </div>
@@ -209,7 +232,7 @@ function HomeView({ onNavigate }: { onNavigate: (view: 'submit' | 'track') => vo
   const [categories, setCategories] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch('/api/categories', { credentials: 'include' })
+    fetchWithAuth('/api/categories')
       .then(res => res.json())
       .then(data => setCategories(data))
       .catch(err => console.error('Failed to fetch categories:', err));
@@ -322,14 +345,19 @@ function SubmitView({ onBack }: { onBack: () => void }) {
     category: '',
     description: '',
     location: '',
-    contact_info: '',
+    first_name: '',
+    last_name: '',
+    phone_number: '+254',
+    email: '',
+    gender: '',
+    ward: '',
     priority: 'Medium'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/categories', { credentials: 'include' })
+    fetchWithAuth('/api/categories')
       .then(res => res.json())
       .then(data => setCategories(data))
       .catch(err => console.error('Failed to fetch categories:', err));
@@ -339,10 +367,9 @@ function SubmitView({ onBack }: { onBack: () => void }) {
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const res = await fetch('/api/grievances', {
+      const res = await fetchWithAuth('/api/grievances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(formData)
       });
       if (!res.ok) {
@@ -406,6 +433,93 @@ function SubmitView({ onBack }: { onBack: () => void }) {
 
       <form onSubmit={handleSubmit} className="space-y-8 bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
         <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">First Name</label>
+              <input 
+                required
+                type="text"
+                placeholder="Enter your first name"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                value={formData.first_name}
+                onChange={e => setFormData({ ...formData, first_name: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Last Name</label>
+              <input 
+                required
+                type="text"
+                placeholder="Enter your last name"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                value={formData.last_name}
+                onChange={e => setFormData({ ...formData, last_name: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Gender</label>
+              <select 
+                required
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                value={formData.gender}
+                onChange={e => setFormData({ ...formData, gender: e.target.value })}
+              >
+                <option value="">Select Gender</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+                <option value="Prefer not to say">Prefer not to say</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Ward (Mwatate)</label>
+              <select 
+                required
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                value={formData.ward}
+                onChange={e => setFormData({ ...formData, ward: e.target.value })}
+              >
+                <option value="">Select Ward</option>
+                <option value="Ronge">Ronge</option>
+                <option value="Mwatate">Mwatate</option>
+                <option value="Bura">Bura</option>
+                <option value="Chawia">Chawia</option>
+                <option value="Wusi/Kishamba">Wusi/Kishamba</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Phone Number</label>
+              <div className="relative">
+                <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  required
+                  type="tel"
+                  placeholder="+254..."
+                  className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  value={formData.phone_number}
+                  onChange={e => setFormData({ ...formData, phone_number: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Email Address</label>
+              <input 
+                required
+                type="email"
+                placeholder="yourname@example.com"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                value={formData.email}
+                onChange={e => setFormData({ ...formData, email: e.target.value })}
+              />
+            </div>
+          </div>
+
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">Grievance Title</label>
             <input 
@@ -461,33 +575,18 @@ function SubmitView({ onBack }: { onBack: () => void }) {
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">Location</label>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">Specific Location</label>
             <div className="relative">
               <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input 
                 required
                 type="text"
-                placeholder="e.g., Mwatate Market, Near Post Office"
+                placeholder="e.g., Near Mwatate Post Office, Village name"
                 className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
                 value={formData.location}
                 onChange={e => setFormData({ ...formData, location: e.target.value })}
               />
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">Contact Information (Optional)</label>
-            <div className="relative">
-              <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="text"
-                placeholder="Phone number or Email"
-                className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
-                value={formData.contact_info}
-                onChange={e => setFormData({ ...formData, contact_info: e.target.value })}
-              />
-            </div>
-            <p className="text-xs text-slate-400 mt-2 italic">Your contact info will only be used for follow-up if necessary.</p>
           </div>
         </div>
 
@@ -515,7 +614,7 @@ function TrackView() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/grievances/${trackingNumber}`, { credentials: 'include' });
+      const res = await fetchWithAuth(`/api/grievances/${trackingNumber}`);
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Search failed: ${res.status}`);
@@ -599,8 +698,9 @@ function TrackView() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div>
-                  <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Category</h4>
-                  <p className="font-semibold text-slate-800">{grievance.category}</p>
+                  <p className="text-xs text-slate-400 uppercase font-bold mb-1">Reporter</p>
+                  <p className="font-bold text-slate-800">{grievance.first_name} {grievance.last_name}</p>
+                  <p className="text-xs text-slate-500">{grievance.gender} • {grievance.ward} Ward</p>
                 </div>
                 <div>
                   <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Submitted On</h4>
@@ -649,9 +749,56 @@ function TrackView() {
   );
 }
 
+function ProfileView({ user, onSuccess }: { user: User, onSuccess: (msg: string) => void }) {
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const res = await fetchWithAuth('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPassword, newPassword })
+      });
+      if (res.ok) {
+        onSuccess('Password changed successfully');
+        setOldPassword('');
+        setNewPassword('');
+      } else {
+        const data = await res.json();
+        setError(data.error);
+      }
+    } catch (err) {
+      setError('Failed to change password');
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      <h3 className="text-lg font-bold text-slate-900 mb-6">Change Password</h3>
+      <form onSubmit={handleChangePassword} className="space-y-4">
+        {error && <div className="text-red-500 text-sm">{error}</div>}
+        <div>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Current Password</label>
+          <input type="password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" required />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">New Password</label>
+          <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" required />
+        </div>
+        <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all">Change Password</button>
+      </form>
+    </div>
+  );
+}
+
 function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
-  const [activeTab, setActiveTab] = useState<'grievances' | 'users' | 'categories' | 'dashboard'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'grievances' | 'users' | 'categories' | 'dashboard' | 'profile'>('dashboard');
   const [grievances, setGrievances] = useState<Grievance[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedGrievance, setSelectedGrievance] = useState<Grievance | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -666,7 +813,11 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
-  const filteredGrievances = (Array.isArray(grievances) ? grievances : []).filter(g => {
+  const roleFilteredGrievances = (Array.isArray(grievances) ? grievances : []).filter(g => {
+    return user.role === 'GRM Officer' ? g.assigned_to === user.username : true;
+  });
+
+  const filteredGrievances = roleFilteredGrievances.filter(g => {
     const matchesSearch = g.tracking_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (g.title && g.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
       g.description.toLowerCase().includes(searchQuery.toLowerCase());
@@ -686,13 +837,27 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchGrievances();
+      fetchUsers();
     }, 300);
     return () => clearTimeout(timer);
   }, []);
 
-  const fetchGrievances = async () => {
+  const fetchUsers = async () => {
     try {
-      const res = await fetch('/api/admin/grievances', { credentials: 'include' });
+      const res = await fetchWithAuth('/api/admin/users');
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch users:', err);
+    }
+  };
+
+  const fetchGrievances = async () => {
+    setError(null);
+    try {
+      const res = await fetchWithAuth('/api/admin/grievances');
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Failed to fetch grievances: ${res.status}`);
@@ -714,10 +879,9 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
 
   const updateStatus = async (id: string, status: string) => {
     try {
-      await fetch(`/api/admin/grievances/${id}`, {
+      await fetchWithAuth(`/api/admin/grievances/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ status })
       });
       fetchGrievances();
@@ -732,10 +896,9 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
 
   const assignOfficial = async (id: string, assigned_to: string) => {
     try {
-      await fetch(`/api/admin/grievances/${id}`, {
+      await fetchWithAuth(`/api/admin/grievances/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ assigned_to })
       });
       fetchGrievances();
@@ -749,14 +912,20 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
   };
 
   const exportToCSV = () => {
-    const headers = ['Tracking Number', 'Title', 'Category', 'Description', 'Location', 'Priority', 'Status', 'Assigned To', 'Created At'];
-    const dataToExport = Array.isArray(grievances) ? grievances : [];
+    const headers = ['Tracking Number', 'Title', 'Category', 'Description', 'First Name', 'Last Name', 'Gender', 'Ward', 'Location', 'Phone', 'Email', 'Priority', 'Status', 'Assigned To', 'Created At'];
+    const dataToExport = roleFilteredGrievances;
     const rows = dataToExport.map(g => [
       g.tracking_number,
       `"${(g.title || '').replace(/"/g, '""')}"`,
       g.category,
       `"${g.description.replace(/"/g, '""')}"`,
+      `"${(g.first_name || '').replace(/"/g, '""')}"`,
+      `"${(g.last_name || '').replace(/"/g, '""')}"`,
+      g.gender || '',
+      g.ward || '',
       `"${g.location.replace(/"/g, '""')}"`,
+      g.phone_number || '',
+      g.email || '',
       g.priority,
       g.status,
       g.assigned_to || 'Unassigned',
@@ -782,7 +951,26 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
   if (loading) return <div className="p-24 text-center">Loading grievances...</div>;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 relative">
+      {/* Global Toast */}
+      <div className="fixed top-8 right-8 z-50 pointer-events-none">
+        <AnimatePresence>
+          {successMessage && (
+            <motion.div 
+              initial={{ opacity: 0, x: 20, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 20, scale: 0.9 }}
+              className="bg-slate-900 text-white px-6 py-3 rounded-xl flex items-center gap-3 shadow-2xl pointer-events-auto border border-white/10"
+            >
+              <div className="w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center">
+                <CheckCircle2 size={14} className="text-white" />
+              </div>
+              <p className="font-bold text-sm tracking-tight">{successMessage}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
       <div className="flex justify-between items-start mb-10">
         <div>
           <h2 className="text-3xl font-bold text-slate-900">Admin Dashboard</h2>
@@ -801,17 +989,27 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
               >
                 Grievances
               </button>
+              {(user.role === 'Super Admin' || user.role === 'admin') && (
+                <>
+                  <button 
+                    onClick={() => setActiveTab('users')}
+                    className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    User Management
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('categories')}
+                    className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'categories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    Categories
+                  </button>
+                </>
+              )}
               <button 
-                onClick={() => setActiveTab('users')}
-                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                onClick={() => setActiveTab('profile')}
+                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'profile' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
-                User Management
-              </button>
-              <button 
-                onClick={() => setActiveTab('categories')}
-                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeTab === 'categories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                Categories
+                Profile
               </button>
             </div>
             <div className="h-8 w-px bg-slate-200"></div>
@@ -843,11 +1041,11 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
         <div className="flex gap-4">
           <div className="bg-white px-6 py-3 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-xs text-slate-500 uppercase font-bold">Total Reports</p>
-            <p className="text-2xl font-bold">{Array.isArray(grievances) ? grievances.length : 0}</p>
+            <p className="text-2xl font-bold">{roleFilteredGrievances.length}</p>
           </div>
           <div className="bg-white px-6 py-3 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-xs text-slate-500 uppercase font-bold">Pending</p>
-            <p className="text-2xl font-bold text-amber-600">{(Array.isArray(grievances) ? grievances : []).filter(g => g.status === 'Pending').length}</p>
+            <p className="text-2xl font-bold text-amber-600">{roleFilteredGrievances.filter(g => g.status === 'Pending').length}</p>
           </div>
         </div>
       </div>
@@ -993,19 +1191,6 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <AnimatePresence>
-                    {successMessage && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        className="bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-lg shadow-emerald-500/20"
-                      >
-                        <CheckCircle2 size={12} />
-                        {successMessage}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
                   <div className="flex gap-4 items-end">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</label>
@@ -1033,14 +1218,14 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Assign To</label>
                     <select 
-                      disabled={user.role === 'Viewer'}
+                      disabled={user.role !== 'Super Admin' && user.role !== 'admin'}
                       className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium outline-none bg-white disabled:bg-slate-50 disabled:text-slate-400"
                       value={selectedGrievance.assigned_to || ''}
                       onChange={(e) => assignOfficial(selectedGrievance.id, e.target.value)}
                     >
                       <option value="">Unassigned</option>
-                      {OFFICIALS.map(off => (
-                        <option key={off} value={off}>{off}</option>
+                      {users.map(u => (
+                        <option key={u.id} value={u.username}>{u.username}</option>
                       ))}
                     </select>
                   </div>
@@ -1048,7 +1233,12 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
               </div>
             </div>
             <div className="p-8 overflow-y-auto space-y-8">
-                <div className="grid grid-cols-3 gap-8">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+                  <div>
+                    <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Reporter</h4>
+                    <p className="font-semibold text-slate-800">{selectedGrievance.first_name} {selectedGrievance.last_name}</p>
+                    <p className="text-xs text-slate-500">{selectedGrievance.gender}</p>
+                  </div>
                   <div>
                     <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Category</h4>
                     <p className="font-semibold text-slate-800">{selectedGrievance.category}</p>
@@ -1062,13 +1252,23 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
                     }`}>{selectedGrievance.priority}</p>
                   </div>
                   <div>
-                    <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Location</h4>
-                    <p className="font-semibold text-slate-800 flex items-center gap-2"><MapPin size={14} /> {selectedGrievance.location}</p>
+                    <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Ward</h4>
+                    <p className="font-semibold text-slate-800">{selectedGrievance.ward}</p>
                   </div>
                 </div>
-                <div>
-                  <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Contact Info</h4>
-                  <p className="font-semibold text-slate-800 flex items-center gap-2"><Phone size={14} /> {selectedGrievance.contact_info || 'Not provided'}</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div>
+                    <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Contact Details</h4>
+                    <div className="space-y-1">
+                      <p className="font-semibold text-slate-800 flex items-center gap-2"><Phone size={14} /> {selectedGrievance.phone_number}</p>
+                      <p className="font-semibold text-slate-800 flex items-center gap-2"><Send size={14} /> {selectedGrievance.email}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Specific Location</h4>
+                    <p className="font-semibold text-slate-800 flex items-center gap-2"><MapPin size={14} /> {selectedGrievance.location}</p>
+                  </div>
                 </div>
                 <div>
                   <h4 className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2">Assigned Official</h4>
@@ -1099,12 +1299,14 @@ function AdminView({ user, onLogout }: { user: User, onLogout: () => void }) {
         </div>
       </div>
     ) : activeTab === 'dashboard' ? (
-      <DashboardView grievances={grievances} />
+      <DashboardView grievances={roleFilteredGrievances} />
     ) : activeTab === 'users' ? (
-      <UserManagementView user={user} />
-    ) : (
-      <CategoryManagementView user={user} />
-    )}
+      <UserManagementView user={user} onSuccess={triggerSuccess} />
+    ) : activeTab === 'categories' ? (
+      <CategoryManagementView user={user} onSuccess={triggerSuccess} />
+    ) : activeTab === 'profile' ? (
+      <ProfileView user={user} onSuccess={triggerSuccess} />
+    ) : null}
     </div>
   );
 }
@@ -1276,7 +1478,7 @@ function DashboardView({ grievances }: { grievances: Grievance[] }) {
   );
 }
 
-function CategoryManagementView({ user }: { user: User }) {
+function CategoryManagementView({ user, onSuccess }: { user: User, onSuccess: (msg: string) => void }) {
   const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -1291,7 +1493,7 @@ function CategoryManagementView({ user }: { user: User }) {
 
   const fetchCategories = async () => {
     try {
-      const res = await fetch('/api/categories', { credentials: 'include' });
+      const res = await fetchWithAuth('/api/categories');
       if (!res.ok) throw new Error('Failed to fetch categories');
       const data = await res.json();
       setCategories(data);
@@ -1306,15 +1508,15 @@ function CategoryManagementView({ user }: { user: User }) {
     e.preventDefault();
     setError(null);
     try {
-      const res = await fetch('/api/admin/categories', {
+      const res = await fetchWithAuth('/api/admin/categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ name: newCategoryName })
       });
       if (res.ok) {
         setNewCategoryName('');
         fetchCategories();
+        onSuccess('Category created successfully');
       } else {
         const data = await res.json();
         setError(data.error);
@@ -1328,15 +1530,15 @@ function CategoryManagementView({ user }: { user: User }) {
     e.preventDefault();
     if (!editingCategory) return;
     try {
-      const res = await fetch(`/api/admin/categories/${editingCategory.id}`, {
+      const res = await fetchWithAuth(`/api/admin/categories/${editingCategory.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ name: editingCategory.name })
       });
       if (res.ok) {
         setEditingCategory(null);
         fetchCategories();
+        onSuccess('Category updated successfully');
       } else {
         const data = await res.json();
         alert(data.error);
@@ -1349,12 +1551,12 @@ function CategoryManagementView({ user }: { user: User }) {
   const handleDeleteCategory = async (id: string) => {
     if (!confirm('Are you sure you want to delete this category?')) return;
     try {
-      const res = await fetch(`/api/admin/categories/${id}`, { 
-        method: 'DELETE',
-        credentials: 'include'
+      const res = await fetchWithAuth(`/api/admin/categories/${id}`, { 
+        method: 'DELETE'
       });
       if (res.ok) {
         fetchCategories();
+        onSuccess('Category deleted successfully');
       } else {
         const data = await res.json();
         alert(data.error);
@@ -1462,7 +1664,7 @@ function CategoryManagementView({ user }: { user: User }) {
   );
 }
 
-function UserManagementView({ user }: { user: User }) {
+function UserManagementView({ user, onSuccess }: { user: User, onSuccess: (msg: string) => void }) {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [newUsername, setNewUsername] = useState('');
@@ -1482,7 +1684,7 @@ function UserManagementView({ user }: { user: User }) {
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch('/api/admin/users', { credentials: 'include' });
+      const res = await fetchWithAuth('/api/admin/users');
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Failed to fetch users: ${res.status}`);
@@ -1500,16 +1702,16 @@ function UserManagementView({ user }: { user: User }) {
     e.preventDefault();
     setError(null);
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await fetchWithAuth('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ username: newUsername, password: newPassword, role: newRole })
       });
       if (res.ok) {
         setNewUsername('');
         setNewPassword('');
         fetchUsers();
+        onSuccess('User created successfully');
       } else {
         const data = await res.json();
         setError(data.error);
@@ -1526,13 +1728,13 @@ function UserManagementView({ user }: { user: User }) {
   const confirmDelete = async () => {
     if (!userToDelete) return;
     try {
-      const res = await fetch(`/api/admin/users/${userToDelete.id}`, { 
-        method: 'DELETE',
-        credentials: 'include'
+      const res = await fetchWithAuth(`/api/admin/users/${userToDelete.id}`, { 
+        method: 'DELETE'
       });
       if (res.ok) {
         fetchUsers();
         setUserToDelete(null);
+        onSuccess('User deleted successfully');
       } else {
         const data = await res.json();
         alert(data.error);
@@ -1544,14 +1746,14 @@ function UserManagementView({ user }: { user: User }) {
 
   const handleUpdateUser = async (id: string, updates: any) => {
     try {
-      const res = await fetch(`/api/admin/users/${id}`, {
+      const res = await fetchWithAuth(`/api/admin/users/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(updates)
       });
       if (res.ok) {
         fetchUsers();
+        onSuccess('User updated successfully');
       } else {
         const data = await res.json();
         alert(data.error);
@@ -1760,6 +1962,7 @@ function LoginView({ onLogin }: { onLogin: (user: User) => void }) {
       });
       const data = await res.json();
       if (res.ok) {
+        localStorage.setItem('mwatate_token', data.token);
         onLogin(data.user);
       } else {
         setError(data.error || 'Login failed');

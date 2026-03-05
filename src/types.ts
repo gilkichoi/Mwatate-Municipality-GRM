@@ -5,7 +5,12 @@ export interface Grievance {
   category: string;
   description: string;
   location: string;
-  contact_info: string;
+  first_name: string;
+  last_name: string;
+  phone_number: string;
+  email: string;
+  gender: string;
+  ward: string;
   priority: 'Low' | 'Medium' | 'High' | 'Urgent';
   status: 'Pending' | 'In Progress' | 'Resolved' | 'Rejected';
   assigned_to?: string;

@@ -4,12 +4,10 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
-import session from "express-session";
 import bcrypt from "bcryptjs";
-import SQLiteStoreFactory from "connect-sqlite3";
+import jwt from "jsonwebtoken";
 import cors from "cors";
 
-const SQLiteStore = SQLiteStoreFactory(session);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -24,7 +22,12 @@ db.exec(`
     category TEXT,
     description TEXT,
     location TEXT,
-    contact_info TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    phone_number TEXT,
+    email TEXT,
+    gender TEXT,
+    ward TEXT,
     priority TEXT DEFAULT 'Medium',
     status TEXT DEFAULT 'Pending',
     assigned_to TEXT,
@@ -85,6 +88,12 @@ db.prepare("UPDATE users SET role = 'Super Admin' WHERE username = 'admin' AND r
 try { db.exec("ALTER TABLE grievances ADD COLUMN title TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN priority TEXT DEFAULT 'Medium';"); } catch (e) {}
 try { db.exec("ALTER TABLE grievances ADD COLUMN assigned_to TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN first_name TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN last_name TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN phone_number TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN email TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN gender TEXT;"); } catch (e) {}
+try { db.exec("ALTER TABLE grievances ADD COLUMN ward TEXT;"); } catch (e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1;"); } catch (e) {}
 
 // Email Transporter Helper (Lazy initialization)
@@ -175,68 +184,45 @@ async function startServer() {
     credentials: true
   }));
   app.use(express.json());
-  const store = new SQLiteStore({ 
-    db: "sessions.db", 
-    dir: __dirname, 
-    table: "sessions" 
-  }) as any;
-  
-  // Handle store errors
-  (store as any).on('error', (err: any) => {
-    console.error("[Session Store Error]", err);
-  });
 
-  app.use(session({
-    store,
-    secret: process.env.SESSION_SECRET || "mwatate-municipality-secret",
-    resave: true,
-    saveUninitialized: true,
-    rolling: true,
-    proxy: true,
-    name: 'connect.sid',
-    cookie: {
-      secure: true,
-      sameSite: "none",
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      httpOnly: true,
-      path: '/'
-    }
-  }));
-
-  // Session Debug Middleware
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api/admin') || req.path === '/api/auth/me') {
-      console.log(`[Session Debug] Path: ${req.path}, Method: ${req.method}, Proto: ${req.protocol}, Origin: ${req.get('origin')}, SessionID: ${req.sessionID}, HasUserId: ${!!(req.session as any)?.userId}, Cookies: ${req.headers.cookie ? 'Present' : 'Missing'}`);
-    }
-    next();
-  });
+  const JWT_SECRET = process.env.JWT_SECRET || "mwatate-municipality-jwt-secret";
 
   // Auth Middleware
   const requireAuth = (req: any, res: any, next: any) => {
-    const hasSession = !!(req.session && (req.session as any).userId);
-    console.log(`[Auth Check] Path: ${req.path}, SessionID: ${req.sessionID}, HasUserId: ${hasSession}, UserId: ${(req.session as any)?.userId}`);
-    if (hasSession) {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({ error: "Unauthorized: No token provided" });
+    }
+
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.user = decoded;
       next();
-    } else {
-      res.status(401).json({ error: "Unauthorized" });
+    } catch (err) {
+      return res.status(401).json({ error: "Unauthorized: Invalid token" });
     }
   };
 
   const requireRole = (roles: string[]) => (req: any, res: any, next: any) => {
-    const userId = (req.session as any)?.userId;
-    const userRole = (req.session as any)?.role;
-    console.log(`[Role Check] Path: ${req.path}, SessionID: ${req.sessionID}, UserId: ${userId}, Role: ${userRole}`);
+    const token = req.headers.authorization?.split(' ')[1];
     
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+    if (!token) {
+      return res.status(401).json({ error: "Unauthorized: No token provided" });
     }
-    if (!userRole) {
-      return res.status(401).json({ error: "Session invalid: Role missing. Please login again." });
-    }
-    if (roles.includes(userRole) || userRole === 'admin' || userRole === 'Super Admin') {
-      next();
-    } else {
-      res.status(403).json({ error: "Forbidden: Insufficient permissions" });
+
+    try {
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      req.user = decoded;
+      
+      const userRole = decoded.role;
+      if (roles.includes(userRole) || userRole === 'admin' || userRole === 'Super Admin') {
+        next();
+      } else {
+        res.status(403).json({ error: "Forbidden: Insufficient permissions" });
+      }
+    } catch (err) {
+      return res.status(401).json({ error: "Unauthorized: Invalid token" });
     }
   };
 
@@ -249,55 +235,54 @@ async function startServer() {
       if (user.is_active === 0) {
         return res.status(403).json({ error: "Account deactivated. Please contact administrator." });
       }
-      (req.session as any).userId = user.id;
-      (req.session as any).username = user.username;
-      (req.session as any).role = user.role;
       
-      req.session.save((err) => {
-        if (err) {
-          console.error("Session save error:", err);
-          return res.status(500).json({ error: "Failed to save session" });
-        }
-        res.json({ success: true, user: { id: user.id, username: user.username, role: user.role } });
-      });
+      const token = jwt.sign(
+        { userId: user.id, username: user.username, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+      
+      res.json({ success: true, token, user: { id: user.id, username: user.username, role: user.role } });
     } else {
       res.status(401).json({ error: "Invalid credentials" });
     }
   });
 
-  app.post("/api/auth/logout", (req, res) => {
-    req.session.destroy((err) => {
-      if (err) return res.status(500).json({ error: "Failed to logout" });
+  app.post("/api/auth/change-password", requireAuth, (req: any, res) => {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.user.userId;
+    
+    const user: any = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+    
+    if (user && bcrypt.compareSync(oldPassword, user.password)) {
+      const hashedPassword = bcrypt.hashSync(newPassword, 10);
+      db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashedPassword, userId);
       res.json({ success: true });
-    });
+    } else {
+      res.status(401).json({ error: "Invalid current password" });
+    }
   });
 
-  app.get("/api/auth/me", (req, res) => {
-    if ((req.session as any).userId) {
-      res.json({ 
-        user: { 
-          id: (req.session as any).userId, 
-          username: (req.session as any).username, 
-          role: (req.session as any).role 
-        } 
-      });
-    } else {
-      res.status(401).json({ error: "Not logged in" });
-    }
+  app.post("/api/auth/logout", (req, res) => {
+    res.json({ success: true });
+  });
+
+  app.get("/api/auth/me", requireAuth, (req: any, res) => {
+    res.json({ user: req.user });
   });
 
   // API Routes
   app.post("/api/grievances", (req, res) => {
-    const { title, category, description, location, contact_info, priority } = req.body;
+    const { title, category, description, location, first_name, last_name, phone_number, email, gender, ward, priority } = req.body;
     const id = Math.random().toString(36).substring(2, 11);
     const tracking_number = "MWT-" + Math.floor(100000 + Math.random() * 900000);
     
     try {
       const stmt = db.prepare(`
-        INSERT INTO grievances (id, tracking_number, title, category, description, location, contact_info, priority)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO grievances (id, tracking_number, title, category, description, location, first_name, last_name, phone_number, email, gender, ward, priority)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      stmt.run(id, tracking_number, title, category, description, location, contact_info, priority || 'Medium');
+      stmt.run(id, tracking_number, title, category, description, location, first_name, last_name, phone_number, email, gender, ward, priority || 'Medium');
       res.json({ success: true, tracking_number });
     } catch (error) {
       console.error(error);
@@ -332,19 +317,29 @@ async function startServer() {
       }
 
       if (status !== undefined && assigned_to !== undefined) {
+        // Validate user exists
+        const user = db.prepare("SELECT id FROM users WHERE id = ?").get(assigned_to);
+        if (!user) {
+          return res.status(400).json({ error: "Assigned user not found" });
+        }
         db.prepare("UPDATE grievances SET status = ?, assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, assigned_to, id);
       } else if (status !== undefined) {
         db.prepare("UPDATE grievances SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(status, id);
       } else if (assigned_to !== undefined) {
+        // Validate user exists
+        const user = db.prepare("SELECT id FROM users WHERE id = ?").get(assigned_to);
+        if (!user) {
+          return res.status(400).json({ error: "Assigned user not found" });
+        }
         db.prepare("UPDATE grievances SET assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(assigned_to, id);
       }
 
-      // Send notification if status changed and contact_info is an email
-      if (status !== undefined && status !== grievance.status && grievance.contact_info) {
+      // Send notification if status changed and email is provided
+      if (status !== undefined && status !== grievance.status && grievance.email) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (emailRegex.test(grievance.contact_info)) {
+        if (emailRegex.test(grievance.email)) {
           // Fire and forget email notification
-          sendStatusUpdateEmail(grievance.contact_info, grievance.tracking_number, grievance.title || grievance.category, status);
+          sendStatusUpdateEmail(grievance.email, grievance.tracking_number, grievance.title || grievance.category, status);
         }
       }
 
@@ -375,9 +370,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/admin/users/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+  app.delete("/api/admin/users/:id", requireRole(['Super Admin', 'admin']), (req: any, res) => {
     const { id } = req.params;
-    if (id === (req.session as any).userId) {
+    if (id === req.user.userId) {
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
     try {
@@ -388,7 +383,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/admin/users/:id", requireRole(['Super Admin', 'admin']), (req, res) => {
+  app.patch("/api/admin/users/:id", requireRole(['Super Admin', 'admin']), (req: any, res) => {
     const { id } = req.params;
     const { role, is_active } = req.body;
     
@@ -398,7 +393,7 @@ async function startServer() {
       }
       if (is_active !== undefined) {
         // Prevent deactivating self
-        if (id === (req.session as any).userId && is_active === 0) {
+        if (id === req.user.userId && is_active === 0) {
           return res.status(400).json({ error: "You cannot deactivate your own account" });
         }
         db.prepare("UPDATE users SET is_active = ? WHERE id = ?").run(is_active ? 1 : 0, id);
